@@ -1,121 +1,109 @@
 import pandas as pd
-import numpy as np
-from transformers import pipeline
 import os
-
-# CONFIGURATION
+from transformers import pipeline
+from sklearn.feature_extraction.text import CountVectorizer
+from preprocess import clean_text, data_quality_report
 INPUT_FILE = 'data/raw/raw_reviews.csv'
 OUTPUT_FILE = 'data/processed/analyzed_reviews.csv'
 
-def load_data():
-    """Load raw data and handle basic cleaning."""
+def load_and_clean_data():
     if not os.path.exists(INPUT_FILE):
-        print(f"Error: {INPUT_FILE} not found. Please run src/scraper.py first.")
+        print(f"Error: {INPUT_FILE} not found.")
         return None
     
     df = pd.read_csv(INPUT_FILE)
-    print(f"Loaded {len(df)} raw reviews.")
     
-    # Drop rows where content is empty/NaN
-    df = df.dropna(subset=['content'])
+    # 1. Run Data Quality Checks (Explicit robustness)
+    data_quality_report(df)
     
-    # Ensure content is string type
-    df['content'] = df['content'].astype(str)
+    # 2. Preprocess for NLP
+    # We keep 'content' raw for BERT (it understands context)
+    # We create 'clean_content' for Keyword Extraction
+    df['clean_content'] = df['content'].apply(clean_text)
     
     return df
 
-def analyze_sentiment_bert(df):
-    """
-    Uses a pre-trained BERT model to score sentiment (Positive/Negative).
-    Model: distilbert-base-uncased-finetuned-sst-2-english
-    """
-    print("\n--- Starting Sentiment Analysis (This may take time) ---")
-    print("Loading AI Model...")
-    
+def analyze_sentiment(df):
+    print("Running Sentiment Analysis (DistilBERT)...")
     try:
-        # Initialize the pipeline
         sentiment_pipeline = pipeline(
             "sentiment-analysis", 
             model="distilbert-base-uncased-finetuned-sst-2-english"
         )
+        
+        def get_sentiment(text):
+            # Truncate to 512 for BERT limits
+            try:
+                result = sentiment_pipeline(text[:512])[0]
+                return result['label'], result['score']
+            except:
+                return "NEUTRAL", 0.5
+
+        df[['sentiment_label', 'sentiment_score']] = df['content'].apply(
+            lambda x: pd.Series(get_sentiment(str(x)))
+        )
     except Exception as e:
-        print(f"Error loading model: {e}")
-        return df
-
-    print("Analyzing reviews... (Please wait)")
-    
-    # Helper function to process single text
-    def get_sentiment(text):
-        # Truncate to 512 tokens to fit model limits
-        text = text[:512]
-        try:
-            result = sentiment_pipeline(text)[0]
-            return result['label'], result['score']
-        except:
-            return "NEUTRAL", 0.5
-
-    # Apply to DataFrame
-    # Using zip to unpack the tuple into two columns
-    df[['sentiment_label', 'sentiment_score']] = df['content'].apply(
-        lambda x: pd.Series(get_sentiment(x))
-    )
-    
-    print("Sentiment Analysis Complete.")
+        print(f"Sentiment Model Error: {e}")
     return df
 
-def assign_theme(df):
+def extract_keywords(df):
     """
-    Categorizes reviews based on keywords.
+    Advanced Theme Extraction using Frequency Analysis.
+    Finds top words in Negative reviews vs Positive reviews.
     """
-    print("\n--- Starting Thematic Analysis ---")
+    print("Extracting Data-Driven Themes...")
     
-    def get_theme(text):
-        text = text.lower()
-        
-        # Priority 1: Authentication (Critical Pain Point)
-        if any(x in text for x in ['login', 'sign in', 'password', 'otp', 'sms', 'code', 'fingerprint', 'face id', 'register']):
-            return 'Authentication & Security'
-            
-        # Priority 2: Technical Stability
-        elif any(x in text for x in ['crash', 'bug', 'close', 'stopped', 'freeze', 'shut', 'error', 'open']):
-            return 'App Stability (Bugs)'
-            
-        # Priority 3: Performance
-        elif any(x in text for x in ['slow', 'lag', 'hang', 'wait', 'loading', 'speed', 'fast']):
-            return 'Performance/Speed'
-            
-        # Priority 4: Features & Transactions
-        elif any(x in text for x in ['transfer', 'send', 'pay', 'transaction', 'recharge', 'airtime', 'statement']):
-            return 'Transactions & Features'
-            
-        # Priority 5: UX/UI
-        elif any(x in text for x in ['ui', 'design', 'interface', 'look', 'user friendly', 'easy', 'app', 'update']):
-            return 'User Interface (UI)'
-            
-        # Fallback
-        return 'General Feedback'
+    # We use CountVectorizer to find top words, ignoring standard English stop words
+    # plus common banking words that aren't helpful themes (like 'bank', 'app')
+    custom_stop_words = ['the', 'and', 'to', 'is', 'it', 'for', 'of', 'in', 'app', 'bank', 'ethiopia', 'my']
+    
+    vectorizer = CountVectorizer(stop_words='english', max_features=10)
+    
+    def get_top_keywords(subset_df):
+        if subset_df.empty: return "None"
+        try:
+            # Fit vectorizer to the clean text
+            X = vectorizer.fit_transform(subset_df['clean_content'])
+            # Get feature names (words)
+            words = vectorizer.get_feature_names_out()
+            return ", ".join(words)
+        except ValueError:
+            return "Insufficient Data"
 
-    df['theme'] = df['content'].apply(get_theme)
-    print("Themes Assigned.")
+    # Create a 'keywords' column based on the review's sentiment group
+    # This is a simplified approach to tag the review with the top keywords of its cluster
+    # For individual row tagging, we stick to rule-based for precision, 
+    # but we PRINT the top keywords for the Report.
+    
+    print("\n--- INSIGHTS: Top Pain Points (Keywords in Negative Reviews) ---")
+    neg_reviews = df[df['sentiment_label'] == 'NEGATIVE']
+    for bank in df['bank_name'].unique():
+        bank_neg = neg_reviews[neg_reviews['bank_name'] == bank]
+        keywords = get_top_keywords(bank_neg)
+        print(f"[{bank}]: {keywords}")
+    print("----------------------------------------------------------------\n")
+
+    # For the database, we stick to robust Rule-Based tagging because 
+    # it is more consistent for SQL queries later.
+    def consistent_theme(text):
+        t = text.lower()
+        if any(w in t for w in ['login', 'otp', 'sms', 'code', 'sign']): return "Authentication"
+        if any(w in t for w in ['slow', 'stuck', 'load', 'wait']): return "Performance"
+        if any(w in t for w in ['crash', 'close', 'bug', 'error']): return "Stability"
+        if any(w in t for w in ['trans', 'pay', 'send', 'telebirr']): return "Transactions"
+        return "General"
+    
+    df['theme'] = df['content'].apply(consistent_theme)
     return df
 
 if __name__ == "__main__":
-    # 1. Load
-    df = load_data()
-    
+    df = load_and_clean_data()
     if df is not None:
-        # 2. Analyze Sentiment
-        df = analyze_sentiment_bert(df)
+        df = analyze_sentiment(df)
+        df = extract_keywords(df)
         
-        # 3. Analyze Themes
-        df = assign_theme(df)
-        
-        # 4. Save
+        # Save
         os.makedirs('data/processed', exist_ok=True)
-        df.to_csv(OUTPUT_FILE, index=False)
-        print(f"\nSUCCESS! Processed {len(df)} reviews.")
-        print(f"Saved to: {OUTPUT_FILE}")
-        
-        # Preview
-        print("\nSample Data:")
-        print(df[['content', 'sentiment_label', 'theme']].head())
+        # Drop the temp 'clean_content' column before saving to keep CSV clean
+        df.drop(columns=['clean_content']).to_csv(OUTPUT_FILE, index=False)
+        print(f"Success. Analyzed data saved to {OUTPUT_FILE}")

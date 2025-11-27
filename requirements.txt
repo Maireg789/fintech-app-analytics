@@ -22,3 +22,4 @@ wordcloud
 # Notebook Environment (Optional but recommended)
 jupyter
 notebook
+scikit-learn
