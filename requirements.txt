@@ -1,0 +1,24 @@
+# Data Manipulation
+pandas
+numpy
+
+# Web Scraping
+google-play-scraper
+
+# NLP & Sentiment Analysis (Hugging Face)
+transformers
+torch
+scipy
+
+# Database (PostgreSQL)
+sqlalchemy
+psycopg2-binary
+
+# Visualization
+matplotlib
+seaborn
+wordcloud
+
+# Notebook Environment (Optional but recommended)
+jupyter
+notebook
