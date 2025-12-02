@@ -1,0 +1,5 @@
+2025-12-02 15:57:09,914 - INFO - [INFO] Database connection established.
+2025-12-02 15:57:09,937 - INFO - [INFO] Loaded 1516 rows from CSV.
+2025-12-02 15:57:10,057 - INFO - [SUCCESS] Banks table populated (or already existed).
+2025-12-02 15:57:10,062 - INFO - [INFO] Mapping bank names...
+2025-12-02 15:57:10,145 - INFO - [SUCCESS] Inserted 1516 reviews into PostgreSQL.
