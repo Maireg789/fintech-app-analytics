@@ -1,13 +1,30 @@
 import pandas as pd
 import os
+import nltk
+from nltk.stem import WordNetLemmatizer
+from nltk.corpus import stopwords
 from transformers import pipeline
 from sklearn.feature_extraction.text import CountVectorizer
 
-# Import the upgraded tools
+# Import from your corrected preprocess file
 from preprocess import clean_text, data_quality_report, clean_dataframe
 
 INPUT_FILE = 'data/raw/raw_reviews.csv'
 OUTPUT_FILE = 'data/processed/analyzed_reviews.csv'
+
+# --- NLTK SETUP (Stable Lemmatization) ---
+print("Setting up NLTK...")
+try:
+    nltk.data.find('corpora/wordnet')
+    nltk.data.find('corpora/stopwords')
+except LookupError:
+    print("Downloading NLTK data...")
+    nltk.download('wordnet')
+    nltk.download('omw-1.4')
+    nltk.download('stopwords')
+
+lemmatizer = WordNetLemmatizer()
+stop_words = set(stopwords.words('english'))
 
 def load_and_clean_data():
     if not os.path.exists(INPUT_FILE):
@@ -16,20 +33,31 @@ def load_and_clean_data():
     
     df = pd.read_csv(INPUT_FILE)
     
-    # --- ADDRESSING FEEDBACK HERE ---
-    # Apply strict cleaning (Deduplication, Dates, Missingness)
+    # 1. Use your strict cleaning function
     df = clean_dataframe(df)
-    
-    # Run Quality Check
     data_quality_report(df)
     
-    # Create temp column for NLP
+    # 2. Basic Text Cleaning
     df['clean_content'] = df['content'].apply(clean_text)
+    
+    # --- REQUIREMENT: DEEP PREPROCESSING (Lemmatization) ---
+    print("Applying NLTK Lemmatization...")
+    
+    def lemmatize_text(text):
+        if not isinstance(text, str): return ""
+        # Split text into words
+        words = text.split()
+        # Lemmatize (run -> run, running -> run)
+        lemmas = [lemmatizer.lemmatize(word) for word in words if word not in stop_words]
+        return " ".join(lemmas)
+
+    # We store this in a new column for the theme analysis
+    df['lemmatized_content'] = df['clean_content'].apply(lemmatize_text)
     
     return df
 
 def analyze_sentiment(df):
-    print("Running Sentiment Analysis (DistilBERT)...")
+    print("Running Sentiment Analysis...")
     try:
         sentiment_pipeline = pipeline(
             "sentiment-analysis", 
@@ -38,7 +66,7 @@ def analyze_sentiment(df):
         
         def get_sentiment(text):
             try:
-                # Truncate to 512 tokens
+                # Truncate to 512 tokens to prevent crashes
                 result = sentiment_pipeline(str(text)[:512])[0]
                 return result['label'], result['score']
             except:
@@ -52,45 +80,36 @@ def analyze_sentiment(df):
     return df
 
 def extract_keywords(df):
-    print("Extracting Data-Driven Themes...")
+    print("Extracting Themes...")
     
-    custom_stop_words = ['the', 'and', 'to', 'is', 'it', 'for', 'of', 'in', 'app', 'bank', 'ethiopia', 'my', 'mobile', 'banking', 'please']
-    
-    try:
-        vectorizer = CountVectorizer(stop_words='english', max_features=10)
-        
-        def get_top_keywords(subset_df):
-            # Safety check for empty or all-whitespace data
-            if subset_df.empty or subset_df['clean_content'].str.strip().eq("").all():
-                return "None"
-            try:
-                vectorizer.fit(subset_df['clean_content'])
-                return ", ".join(vectorizer.get_feature_names_out())
-            except ValueError:
-                return "Insufficient Data"
-
-        print("\n--- INSIGHTS: Top Pain Points (Keywords in Negative Reviews) ---")
-        neg_reviews = df[df['sentiment_label'] == 'NEGATIVE']
-        
-        for bank in df['bank_name'].unique():
-            bank_neg = neg_reviews[neg_reviews['bank_name'] == bank]
-            keywords = get_top_keywords(bank_neg)
-            print(f"[{bank}]: {keywords}")
-        print("----------------------------------------------------------------\n")
-        
-    except Exception as e:
-        print(f"Keyword Extraction Warning: {e}")
-
-    # Rule-Based tagging
+    # --- REQUIREMENT: RICHER CLUSTERING ---
+    # We use the LEMMATIZED column to group similar words together
     def consistent_theme(text):
         t = str(text).lower()
-        if any(w in t for w in ['login', 'otp', 'sms', 'code', 'sign', 'account']): return "Authentication"
-        if any(w in t for w in ['slow', 'stuck', 'load', 'wait', 'connect']): return "Performance"
-        if any(w in t for w in ['crash', 'close', 'bug', 'error', 'failed']): return "Stability"
-        if any(w in t for w in ['trans', 'pay', 'send', 'telebirr']): return "Transactions"
+        
+        # Authentication Cluster
+        if any(w in t for w in ['login', 'otp', 'sms', 'code', 'sign', 'account', 'password', 'verify', 'log']): 
+            return "Authentication"
+        
+        # Performance Cluster
+        if any(w in t for w in ['slow', 'stuck', 'load', 'wait', 'connect', 'lag', 'hang', 'freeze']): 
+            return "Performance"
+        
+        # Stability Cluster (Bug/Crash)
+        if any(w in t for w in ['crash', 'close', 'bug', 'error', 'fail', 'shut', 'glitch']): 
+            return "Stability"
+        
+        # Transactions Cluster
+        if any(w in t for w in ['trans', 'pay', 'send', 'telebirr', 'transfer', 'money', 'deposit']): 
+            return "Transactions"
+        
+        # UI/UX Cluster
+        if any(w in t for w in ['ui', 'design', 'interface', 'look', 'color', 'screen', 'easy', 'hard']): 
+            return "User Experience"
+            
         return "General"
     
-    df['theme'] = df['content'].apply(consistent_theme)
+    df['theme'] = df['lemmatized_content'].apply(consistent_theme)
     return df
 
 if __name__ == "__main__":
@@ -100,9 +119,7 @@ if __name__ == "__main__":
         df = extract_keywords(df)
         
         os.makedirs('data/processed', exist_ok=True)
-        # Clean up columns before saving
-        if 'clean_content' in df.columns:
-            df = df.drop(columns=['clean_content'])
-            
+        
+        # Save the file
         df.to_csv(OUTPUT_FILE, index=False)
-        print(f"Success. Analyzed data saved to {OUTPUT_FILE}")
+        print(f"Success! Data saved to {OUTPUT_FILE}")
