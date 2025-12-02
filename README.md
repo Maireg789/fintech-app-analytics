@@ -21,3 +21,25 @@ This project analyzes customer sentiment for three Ethiopian banking apps: **CBE
 │ └── Final_Report.pdf
 ├── requirements.txt
 └── README.md
+## 🗄️ Database Architecture & Schema
+
+The project uses a normalized Relational Database (PostgreSQL) to ensure data integrity and reduce redundancy.
+
+### Entity Relationship Diagram (ERD)
+```mermaid
+erDiagram
+    BANKS ||--o{ REVIEWS : "receives"
+    BANKS {
+        int bank_id PK "Primary Key"
+        varchar bank_name "Official Name"
+        varchar app_name "App Store Name"
+    }
+    REVIEWS {
+        int review_id PK "Primary Key"
+        int bank_id FK "Foreign Key -> banks.bank_id"
+        text review_text "Raw User Feedback"
+        int rating "1-5 Star Rating"
+        date review_date "Date Posted"
+        varchar sentiment_label "POS/NEU/NEG"
+        float sentiment_score "Confidence Score"
+    }
