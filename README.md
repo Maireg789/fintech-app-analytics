@@ -11,3 +11,13 @@ This project analyzes customer sentiment for three Ethiopian banking apps: **CBE
 - **Visualization:** `matplotlib`, `seaborn`, `wordcloud`
 
 ## 📂 Project Structure
+├── data/ # Raw and processed CSVs
+├── src/
+│ ├── scraper.py # Google Play Store Scraper
+│ ├── database.py # ETL Pipeline (CSV -> Postgres)
+│ ├── visualize.py # Generates charts for the report
+├── reports/
+│ ├── figures/ # Generated PNG charts
+│ └── Final_Report.pdf
+├── requirements.txt
+└── README.md
